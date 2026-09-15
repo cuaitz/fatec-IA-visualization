@@ -14,6 +14,11 @@ MAX_PLACEMENT_ATTEMPTS = 500
 NODE_COLOR = "#686898"
 NODE_BORDER_COLOR = "#eeeeee"
 EDGE_COLOR = "#4a4a5a"
+EDGE_WEIGHT_COLOR = "#cfcfcf"
+EDGE_WEIGHT_FONT_SIZE = 36
+
+# Divides an edge's on-screen length to get its weight; tweak to taste.
+EDGE_WEIGHT_FACTOR = 40
 
 # How much larger the pool of nearby candidate edges is than what's actually
 # needed, before randomly sampling from it. Higher values favor locality less.
@@ -27,6 +32,7 @@ class GraphArea:
         self.bounds = bounds
         self.nodes: list[tuple[int, int]] = []
         self.edges: list[tuple[int, int]] = []
+        self.weight_font = pygame.font.SysFont(None, EDGE_WEIGHT_FONT_SIZE)
 
     def generate(self, node_count: int, edge_count: int) -> None:
         """Scatters `node_count` well-separated nodes, then connects `edge_count` pairs \
@@ -152,7 +158,14 @@ class GraphArea:
 
     def render(self, screen: pygame.Surface) -> None:
         for start_index, end_index in self.edges:
-            pygame.draw.line(screen, EDGE_COLOR, self.nodes[start_index], self.nodes[end_index], 2)
+            start = self.nodes[start_index]
+            end = self.nodes[end_index]
+            pygame.draw.line(screen, EDGE_COLOR, start, end, 2)
+
+            weight = math.ceil(math.dist(start, end) / EDGE_WEIGHT_FACTOR)
+            label = self.weight_font.render(str(weight), True, EDGE_WEIGHT_COLOR)
+            midpoint = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
+            screen.blit(label, label.get_rect(center=midpoint))
 
         for position in self.nodes:
             pygame.draw.circle(screen, NODE_COLOR, position, NODE_RADIUS)
