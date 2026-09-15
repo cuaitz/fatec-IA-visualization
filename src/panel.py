@@ -32,7 +32,7 @@ class ControlPanel:
 
     def __init__(
         self,
-        on_generate: Callable[[int, int], None] | None = None,
+        on_generate: Callable[[int], None] | None = None,
         on_start: Callable[[], None] | None = None,
         on_stop: Callable[[], None] | None = None,
         on_restart: Callable[[], None] | None = None,
@@ -41,8 +41,7 @@ class ControlPanel:
         on_algorithm_changed: Callable[[str], None] | None = None,
     ) -> None:
         self.step_duration: ValueNotifier[int] = ValueNotifier(10)
-        self.node_count: ValueNotifier[int] = ValueNotifier(20)
-        self.edge_count: ValueNotifier[int] = ValueNotifier(20)
+        self.maze_size: ValueNotifier[int] = ValueNotifier(15)
         self.on_generate = on_generate
         self.on_start = on_start
         self.on_stop = on_stop
@@ -89,44 +88,14 @@ class ControlPanel:
             self.on_algorithm_changed(value)
 
     def _on_generate_click(self) -> None:
-        print(f"Generate clicked ({self.node_count.value} nodes, {self.edge_count.value} edges)")
         if self.on_generate is not None:
-            self.on_generate(self.node_count.value, self.edge_count.value)
+            self.on_generate(self.maze_size.value)
 
     def _on_step_duration_changed(self, value: int) -> None:
         self.step_duration.value = value
-        print(f"Step duration: {value}")
 
-    def _on_node_count_changed(self, value: int) -> None:
-        self.node_count.value = value
-        print(f"Node count: {value}")
-
-    def _on_edge_count_changed(self, value: int) -> None:
-        self.edge_count.value = value
-        print(f"Edge count: {value}")
-
-    def _min_edge_count(self) -> int:
-        return self.node_count.value - 1
-
-    def _max_edge_count(self) -> int:
-        # A complete graph: every node connected to every other, each edge counted once
-        node_count = self.node_count.value
-        return node_count * (node_count - 1) // 2
-
-    def _build_edge_count_slider(self, _node_count: Observable) -> Widget:
-        min_edges = self._min_edge_count()
-        max_edges = self._max_edge_count()
-
-        # Keeps the current edge count valid whenever node count changes the allowed range
-        self.edge_count.value = max(min_edges, min(self.edge_count.value, max_edges))
-
-        return Slider(
-            key=WidgetKey(),
-            min_value=min_edges,
-            max_value=max_edges,
-            initial_value=self.edge_count.value,
-            on_changed=self._on_edge_count_changed,
-        )
+    def _on_maze_size_changed(self, value: int) -> None:
+        self.maze_size.value = value
 
     def _build(self) -> Container:
         """Builds the widget tree for the right-hand control panel."""
@@ -207,27 +176,16 @@ class ControlPanel:
                         ),
                         SizedBox(height=28, width=0),
                         Listener(
-                            observable=self.node_count,
-                            builder=lambda count: Text(f"Node count: {count.value}", style=LABEL_STYLE),
+                            observable=self.maze_size,
+                            builder=lambda size: Text(f"Maze size: {size.value}x{size.value}", style=LABEL_STYLE),
                         ),
                         SizedBox(height=6, width=0),
                         Slider(
                             key=WidgetKey(),
-                            min_value=2,
-                            max_value=64,
-                            initial_value=self.node_count.value,
-                            on_changed=self._on_node_count_changed,
-                        ),
-                        SizedBox(height=20, width=0),
-
-                        Listener(
-                            observable=self.edge_count,
-                            builder=lambda count: Text(f"Edge count: {count.value}", style=LABEL_STYLE),
-                        ),
-                        SizedBox(height=6, width=0),
-                        Listener(
-                            observable=self.node_count,
-                            builder=self._build_edge_count_slider,
+                            min_value=5,
+                            max_value=40,
+                            initial_value=self.maze_size.value,
+                            on_changed=self._on_maze_size_changed,
                         ),
                         SizedBox(height=20, width=0),
 
