@@ -5,11 +5,11 @@ import heapq
 import math
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pygame
 
-HEURISTIC_BIAS = 2
+HEURISTIC_BIAS = 5
 
 WALL_CELL_COLOR = "#232329"
 FLOOR_CELL_COLOR = "#6e6e7f"
@@ -33,6 +33,7 @@ class AlgorithmStep:
     visited: set[int]
     frontier: set[int]
     path: list[int]
+    costs: dict[int, float] = field(default_factory=dict)
 
 
 class MazeArea:
@@ -51,6 +52,12 @@ class MazeArea:
         self.step_index = -1
         self.is_playing = False
         self._frame_counter = 0
+        self.show_costs = False
+        self._cost_surface: pygame.Surface | None = None
+        self._cost_cache_key: tuple | None = None
+
+    def set_show_costs(self, show_costs: bool) -> None:
+        self.show_costs = show_costs
 
     def generate(self, size: int) -> None:
         """Blocks off a fraction of a `size` x `size` grid as walls and sends the start/end \
@@ -284,8 +291,21 @@ class MazeArea:
                 continue
             visited.add(cell)
 
+            known_costs = {
+                known_cell: value
+                for known_cell, value in distances.items()
+                if value != math.inf
+            }
             frontier = {n for _, n in heap if n not in visited}
-            steps.append(AlgorithmStep(current=cell, visited=set(visited), frontier=frontier, path=[]))
+            steps.append(
+                AlgorithmStep(
+                    current=cell,
+                    visited=set(visited),
+                    frontier=frontier,
+                    path=[],
+                    costs=known_costs,
+                )
+            )
 
             if cell == end:
                 break
@@ -321,8 +341,21 @@ class MazeArea:
                 continue
             visited.add(cell)
 
+            known_costs = {
+                known_cell: value
+                for known_cell, value in distances.items()
+                if value != math.inf
+            }
             frontier = {n for _, _, n in heap if n not in visited}
-            steps.append(AlgorithmStep(current=cell, visited=set(visited), frontier=frontier, path=[]))
+            steps.append(
+                AlgorithmStep(
+                    current=cell,
+                    visited=set(visited),
+                    frontier=frontier,
+                    path=[],
+                    costs=known_costs,
+                )
+            )
 
             if cell == end:
                 break
@@ -336,7 +369,11 @@ class MazeArea:
                     distances[neighbor] = new_distance
                     previous[neighbor] = cell
                     heuristic = self._heuristic(neighbor, end)
-                    priority = new_distance + heuristic * HEURISTIC_BIAS if greedy else new_distance + heuristic
+                    priority = (
+                        new_distance + heuristic * HEURISTIC_BIAS
+                        if greedy
+                        else new_distance + heuristic
+                    )
                     heapq.heappush(heap, (priority, new_distance, neighbor))
 
         return self._finalize_steps(steps, previous, start, end)
@@ -354,13 +391,14 @@ class MazeArea:
         path = self._reconstruct_path(previous, start, end)
 
         if not steps:
-            return [AlgorithmStep(current=None, visited=set(), frontier=set(), path=path)]
+            return [AlgorithmStep(current=None, visited=set(), frontier=set(), path=path, costs={})]
 
         steps[-1] = AlgorithmStep(
             current=steps[-1].current,
             visited=steps[-1].visited,
             frontier=steps[-1].frontier,
             path=path,
+            costs=steps[-1].costs,
         )
         return steps
 
@@ -389,6 +427,51 @@ class MazeArea:
             else:
                 color = self._cell_color(cell, current_step) or FLOOR_CELL_COLOR
                 self._draw_tile(screen, row, col, color)
+
+        self._ensure_cost_surface(current_step)
+        if self._cost_surface is not None:
+            screen.blit(self._cost_surface, self.bounds.topleft)
+
+    def _ensure_cost_surface(self, current_step: AlgorithmStep | None) -> None:
+        """Rebuilds the cached cost-label overlay only when the step, grid size or toggle \
+        actually change, instead of re-rendering every tile's label every frame."""
+
+        cache_key = (id(current_step), self.show_costs, self.cell_size, self.size)
+        if cache_key == self._cost_cache_key:
+            return
+
+        self._cost_cache_key = cache_key
+        surface = pygame.Surface(self.bounds.size, pygame.SRCALPHA)
+
+        if self.show_costs and current_step is not None:
+            font = pygame.font.SysFont("arial", max(10, self.cell_size // 5))
+            for cell in range(self.size * self.size):
+                cost = self._display_cost(cell, current_step)
+                if cost is None:
+                    continue
+
+                row, col = divmod(cell, self.size)
+                text = font.render(str(int(cost)), True, (255, 255, 255))
+                center = (
+                    col * self.cell_size + self.cell_size // 2,
+                    row * self.cell_size + self.cell_size // 2,
+                )
+                surface.blit(text, text.get_rect(center=center))
+
+        self._cost_surface = surface
+
+    def _display_cost(self, cell: int, current_step: AlgorithmStep | None) -> float | None:
+        if current_step is None or cell not in current_step.costs:
+            return None
+
+        cost = current_step.costs[cell]
+        if self.algorithm in ("a_star", "greedy") and self.end_cell is not None:
+            heuristic = self._heuristic(cell, self.end_cell)
+            if self.algorithm == "greedy":
+                return cost + heuristic * HEURISTIC_BIAS
+            return cost + heuristic
+
+        return cost
 
     def _draw_tile(
         self, screen: pygame.Surface, row: int, col: int, color: str, padding: int = CELL_PADDING

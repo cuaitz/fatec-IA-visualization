@@ -39,6 +39,7 @@ class ControlPanel:
         on_step_forward: Callable[[], None] | None = None,
         on_step_backward: Callable[[], None] | None = None,
         on_algorithm_changed: Callable[[str], None] | None = None,
+        on_show_cost_changed: Callable[[bool], None] | None = None,
     ) -> None:
         self.step_duration: ValueNotifier[int] = ValueNotifier(10)
         self.maze_size: ValueNotifier[int] = ValueNotifier(15)
@@ -49,6 +50,7 @@ class ControlPanel:
         self.on_step_forward = on_step_forward
         self.on_step_backward = on_step_backward
         self.on_algorithm_changed = on_algorithm_changed
+        self.on_show_cost_changed = on_show_cost_changed
         self.widget: Container = self._build()
 
     def calculate_layout(self, available_area: pygame.Rect) -> None:
@@ -86,6 +88,10 @@ class ControlPanel:
     def _on_algorithm_changed(self, value: str) -> None:
         if self.on_algorithm_changed is not None:
             self.on_algorithm_changed(value)
+
+    def _on_show_cost_changed(self, value: bool) -> None:
+        if self.on_show_cost_changed is not None:
+            self.on_show_cost_changed(value)
 
     def _on_generate_click(self) -> None:
         if self.on_generate is not None:
@@ -208,6 +214,20 @@ class ControlPanel:
                                 DropdownItem("greedy", "Greedy A*"),
                             ],
                             on_changed=self._on_algorithm_changed,
+                        ),
+                        SizedBox(height=20, width=0),
+
+                        Row(
+                            shrink_wrap=True,
+                            cross_axis_alignment=CrossAxisAlignment.CENTER,
+                            children=[
+                                Text("Show cost to reach tile", style=LABEL_STYLE),
+                                SizedBox(width=10, height=0),
+                                Switch(
+                                    key=WidgetKey(),
+                                    on_changed=self._on_show_cost_changed,
+                                ),
+                            ],
                         ),
                     ],
                 ),
