@@ -1,8 +1,11 @@
-"""Owns and renders the nodes and edges placed within the graph area."""
+"""Owns and renders the nodes and edges placed within the graph area, and runs the \
+step-by-step pathfinding algorithms (Dijkstra, A*) over them."""
 
+import heapq
 import itertools
 import math
 import random
+from dataclasses import dataclass, replace
 
 import pygame
 
@@ -10,10 +13,18 @@ NODE_RADIUS = 12
 NODE_MARGIN = NODE_RADIUS + 10
 MIN_NODE_DISTANCE = NODE_RADIUS * 3
 MAX_PLACEMENT_ATTEMPTS = 500
+NODE_CLICK_RADIUS = NODE_RADIUS * 1.5
 
 NODE_COLOR = "#686898"
 NODE_BORDER_COLOR = "#eeeeee"
+NODE_START_COLOR = "#4caf50"
+NODE_END_COLOR = "#e05353"
+NODE_VISITED_COLOR = "#e8470d"
+NODE_FRONTIER_COLOR = "#d1a23a"
+NODE_PATH_COLOR = "#7ed957"
+
 EDGE_COLOR = "#4a4a5a"
+PATH_EDGE_COLOR = "#7ed957"
 EDGE_WEIGHT_COLOR = "#cfcfcf"
 EDGE_WEIGHT_FONT_SIZE = 36
 
@@ -25,6 +36,16 @@ EDGE_WEIGHT_FACTOR = 40
 LOCAL_EDGE_POOL_FACTOR = 3
 
 
+@dataclass
+class AlgorithmStep:
+    """A single snapshot of a pathfinding run, used to animate/scrub through it."""
+
+    current: int | None
+    visited: set[int]
+    frontier: set[int]
+    path: list[int]
+
+
 class GraphArea:
     """Holds the generated nodes/edges and draws them within its bounds."""
 
@@ -34,12 +55,34 @@ class GraphArea:
         self.edges: list[tuple[int, int]] = []
         self.weight_font = pygame.font.SysFont(None, EDGE_WEIGHT_FONT_SIZE)
 
+        self.algorithm = "dijkstra"
+        self.start_node: int | None = None
+        self.end_node: int | None = None
+        self.steps: list[AlgorithmStep] = []
+        self.step_index = -1
+        self.is_playing = False
+        self._frame_counter = 0
+
     def generate(self, node_count: int, edge_count: int) -> None:
         """Scatters `node_count` well-separated nodes, then connects `edge_count` pairs \
         favoring nearby nodes, for a web-like look."""
 
         self.nodes = self._generate_nodes(node_count)
         self.edges = self._generate_edges(edge_count)
+        self.start_node, self.end_node = self._farthest_pair()
+        self._reset_run()
+
+    def _farthest_pair(self) -> tuple[int | None, int | None]:
+        """Picks the two nodes with the largest distance between them, so the start and \
+        end points aren't right next to each other."""
+
+        if len(self.nodes) < 2:
+            return (0, None) if self.nodes else (None, None)
+
+        return max(
+            itertools.combinations(range(len(self.nodes)), 2),
+            key=lambda pair: math.dist(self.nodes[pair[0]], self.nodes[pair[1]]),
+        )
 
     def _generate_nodes(self, node_count: int) -> list[tuple[int, int]]:
         """Places nodes at random positions, rejecting candidates that land too close to
@@ -156,17 +199,265 @@ class GraphArea:
 
         return random.sample(pool, min(count, len(pool)))
 
+    def handle_click(self, position: tuple[int, int], button: int) -> None:
+        """Left-click sets the start node, right-click sets the end node, for the next run."""
+
+        node_index = self._find_node_at(position)
+        if node_index is None:
+            return
+
+        if button == 1:
+            self.start_node = node_index
+        elif button == 3:
+            self.end_node = node_index
+        else:
+            return
+
+        self._reset_run()
+
+    def _find_node_at(self, position: tuple[int, int]) -> int | None:
+        for index, node_position in enumerate(self.nodes):
+            if math.dist(position, node_position) <= NODE_CLICK_RADIUS:
+                return index
+
+        return None
+
+    def set_algorithm(self, algorithm: str) -> None:
+        self.algorithm = algorithm
+        self._reset_run()
+
+    def start(self) -> None:
+        """Starts (or resumes) auto-playing through the current algorithm's steps."""
+
+        if not self._ensure_run():
+            return
+
+        self.is_playing = True
+
+    def stop(self) -> None:
+        self.is_playing = False
+
+    def restart(self) -> None:
+        """Rewinds the current run back to its first step and pauses playback."""
+
+        self.is_playing = False
+        self._frame_counter = 0
+
+        if self.steps:
+            self.step_index = 0
+        else:
+            self._ensure_run()
+
+    def step(self, delta: int) -> None:
+        """Manually moves forward/backward through the algorithm's steps."""
+
+        if not self._ensure_run():
+            return
+
+        self.is_playing = False
+        self.step_index = max(0, min(self.step_index + delta, len(self.steps) - 1))
+
+    def update(self, step_duration: int) -> None:
+        """Advances the auto-play, spending `step_duration` frames on each step."""
+
+        if not self.is_playing:
+            return
+
+        self._frame_counter += 1
+        if self._frame_counter < max(1, step_duration):
+            return
+
+        self._frame_counter = 0
+        if self.step_index >= len(self.steps) - 1:
+            self.is_playing = False
+            return
+
+        self.step_index += 1
+
+    def _ensure_run(self) -> bool:
+        """Makes sure `self.steps` holds a computed run for the current start/end nodes, \
+        computing one now if needed. Returns whether a run is available."""
+
+        if self.start_node is None or self.end_node is None:
+            return False
+
+        if not self.steps:
+            self._compute_steps()
+
+        return bool(self.steps)
+
+    def _reset_run(self) -> None:
+        self.steps = []
+        self.step_index = -1
+        self.is_playing = False
+        self._frame_counter = 0
+
+    def _compute_steps(self) -> None:
+        assert self.start_node is not None and self.end_node is not None, "start/end must be set"
+
+        adjacency = self._build_adjacency()
+
+        if self.algorithm == "a_star":
+            self.steps = self._run_a_star(adjacency, self.start_node, self.end_node)
+        elif self.algorithm == "greedy":
+            self.steps = self._run_a_star(adjacency, self.start_node, self.end_node, heuristic_factor=1)
+        else:
+            self.steps = self._run_dijkstra(adjacency, self.start_node, self.end_node)
+
+        self.step_index = 0
+
+    def _build_adjacency(self) -> dict[int, list[tuple[int, int]]]:
+        adjacency: dict[int, list[tuple[int, int]]] = {index: [] for index in range(len(self.nodes))}
+
+        for start_index, end_index in self.edges:
+            weight = self._edge_weight(start_index, end_index)
+            adjacency[start_index].append((end_index, weight))
+            adjacency[end_index].append((start_index, weight))
+
+        return adjacency
+
+    def _edge_weight(self, start_index  : int, end_index: int) -> int:
+        return math.ceil(math.dist(self.nodes[start_index], self.nodes[end_index]) / EDGE_WEIGHT_FACTOR)
+
+    def _heuristic(self, node_index: int, end_index: int, factor: float = EDGE_WEIGHT_FACTOR) -> float:
+        return math.dist(self.nodes[node_index], self.nodes[end_index]) / factor    
+
+    def _run_dijkstra(
+        self, adjacency: dict[int, list[tuple[int, int]]], start: int, end: int
+    ) -> list[AlgorithmStep]:
+        distances = {node: math.inf for node in adjacency}
+        distances[start] = 0
+        previous: dict[int, int] = {}
+        visited: set[int] = set()
+        heap: list[tuple[float, int]] = [(0, start)]
+        steps: list[AlgorithmStep] = []
+
+        while heap:
+            distance, node = heapq.heappop(heap)
+            if node in visited:
+                continue
+            visited.add(node)
+
+            frontier = {n for _, n in heap if n not in visited}
+            steps.append(AlgorithmStep(current=node, visited=set(visited), frontier=frontier, path=[]))
+
+            if node == end:
+                break
+
+            for neighbor, weight in adjacency[node]:
+                if neighbor in visited:
+                    continue
+
+                new_distance = distance + weight
+                if new_distance < distances[neighbor]:
+                    distances[neighbor] = new_distance
+                    previous[neighbor] = node
+                    heapq.heappush(heap, (new_distance, neighbor))
+
+        return self._finalize_steps(steps, previous, start, end)
+
+    def _run_a_star(
+        self,
+        adjacency: dict[int, list[tuple[int, int]]],
+        start: int,
+        end: int,
+        heuristic_factor: float = EDGE_WEIGHT_FACTOR,
+    ) -> list[AlgorithmStep]:
+        distances = {node: math.inf for node in adjacency}
+        distances[start] = 0
+        previous: dict[int, int] = {}
+        visited: set[int] = set()
+        heap: list[tuple[float, float, int]] = [(self._heuristic(start, end, heuristic_factor), 0, start)]
+        steps: list[AlgorithmStep] = []
+
+        while heap:
+            _, distance, node = heapq.heappop(heap)
+            if node in visited:
+                continue
+            visited.add(node)
+
+            frontier = {n for _, _, n in heap if n not in visited}
+            steps.append(AlgorithmStep(current=node, visited=set(visited), frontier=frontier, path=[]))
+
+            if node == end:
+                break
+
+            for neighbor, weight in adjacency[node]:
+                if neighbor in visited:
+                    continue
+
+                new_distance = distance + weight
+                if new_distance < distances[neighbor]:
+                    distances[neighbor] = new_distance
+                    previous[neighbor] = node
+                    priority = new_distance + self._heuristic(neighbor, end, heuristic_factor)
+                    heapq.heappush(heap, (priority, new_distance, neighbor))
+
+        return self._finalize_steps(steps, previous, start, end)
+
+    def _finalize_steps(
+        self,
+        steps: list[AlgorithmStep],
+        previous: dict[int, int],
+        start: int,
+        end: int,
+    ) -> list[AlgorithmStep]:
+        """Attaches the reconstructed path to the last step, so it only appears once \
+        the algorithm has actually reached (or given up looking for) the end node."""
+
+        path = self._reconstruct_path(previous, start, end)
+
+        if not steps:
+            return [AlgorithmStep(current=None, visited=set(), frontier=set(), path=path)]
+
+        steps[-1] = replace(steps[-1], path=path)
+        return steps
+
+    def _reconstruct_path(self, previous: dict[int, int], start: int, end: int) -> list[int]:
+        if end != start and end not in previous:
+            return []
+
+        path = [end]
+        while path[-1] != start:
+            path.append(previous[path[-1]])
+        path.reverse()
+
+        return path
+
     def render(self, screen: pygame.Surface) -> None:
+        current_step = self.steps[self.step_index] if 0 <= self.step_index < len(self.steps) else None
+        path_edges = {
+            (a, b) if a < b else (b, a)
+            for a, b in zip(current_step.path, current_step.path[1:])
+        } if current_step is not None else set()
+
         for start_index, end_index in self.edges:
             start = self.nodes[start_index]
             end = self.nodes[end_index]
-            pygame.draw.line(screen, EDGE_COLOR, start, end, 2)
+            is_path_edge = (start_index, end_index) in path_edges
+            color = PATH_EDGE_COLOR if is_path_edge else EDGE_COLOR
+            pygame.draw.line(screen, color, start, end, 4 if is_path_edge else 2)
 
             weight = math.ceil(math.dist(start, end) / EDGE_WEIGHT_FACTOR)
             label = self.weight_font.render(str(weight), True, EDGE_WEIGHT_COLOR)
             midpoint = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
             screen.blit(label, label.get_rect(center=midpoint))
 
-        for position in self.nodes:
-            pygame.draw.circle(screen, NODE_COLOR, position, NODE_RADIUS)
+        for index, position in enumerate(self.nodes):
+            pygame.draw.circle(screen, self._node_color(index, current_step), position, NODE_RADIUS)
             pygame.draw.circle(screen, NODE_BORDER_COLOR, position, NODE_RADIUS, 1)
+
+    def _node_color(self, index: int, current_step: AlgorithmStep | None) -> str:
+        if current_step is not None and index in current_step.path:
+            return NODE_PATH_COLOR
+        if index == self.start_node:
+            return NODE_START_COLOR
+        if index == self.end_node:
+            return NODE_END_COLOR
+        if current_step is not None:
+            if index in current_step.visited:
+                return NODE_VISITED_COLOR
+            if index in current_step.frontier:
+                return NODE_FRONTIER_COLOR
+
+        return NODE_COLOR

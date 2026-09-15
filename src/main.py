@@ -36,7 +36,15 @@ def main() -> None:
     clock = pygame.time.Clock()
 
     graph_area = GraphArea(GRAPH_AREA_RECT)
-    control_panel = ControlPanel(on_generate=graph_area.generate)
+    control_panel = ControlPanel(
+        on_generate=graph_area.generate,
+        on_start=graph_area.start,
+        on_stop=graph_area.stop,
+        on_restart=graph_area.restart,
+        on_step_forward=lambda: graph_area.step(1),
+        on_step_backward=lambda: graph_area.step(-1),
+        on_algorithm_changed=graph_area.set_algorithm,
+    )
     control_panel.calculate_layout(PANEL_RECT)
 
     running = True
@@ -46,9 +54,12 @@ def main() -> None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            if event.type == pygame.MOUSEBUTTONDOWN and GRAPH_AREA_RECT.collidepoint(event.pos):
+                graph_area.handle_click(event.pos, event.button)
             control_panel.process_event(event)
 
         control_panel.update(delta_time)
+        graph_area.update(control_panel.step_duration.value)
 
         screen.fill(BACKGROUND_COLOR)
         draw_graph_area(screen, graph_area)
