@@ -44,6 +44,7 @@ def main() -> None:
         on_step_forward=lambda: graph_area.step(1),
         on_step_backward=lambda: graph_area.step(-1),
         on_algorithm_changed=graph_area.set_algorithm,
+        on_show_cost_changed=graph_area.set_show_costs,
     )
     control_panel.calculate_layout(PANEL_RECT)
 
