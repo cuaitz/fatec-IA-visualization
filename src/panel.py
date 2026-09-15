@@ -39,10 +39,11 @@ class ControlPanel:
         on_step_forward: Callable[[], None] | None = None,
         on_step_backward: Callable[[], None] | None = None,
         on_algorithm_changed: Callable[[str], None] | None = None,
+        on_show_cost_changed: Callable[[bool], None] | None = None,
     ) -> None:
         self.step_duration: ValueNotifier[int] = ValueNotifier(10)
-        self.node_count: ValueNotifier[int] = ValueNotifier(20)
-        self.edge_count: ValueNotifier[int] = ValueNotifier(20)
+        self.node_count: ValueNotifier[int] = ValueNotifier(6)
+        self.edge_count: ValueNotifier[int] = ValueNotifier(8)
         self.on_generate = on_generate
         self.on_start = on_start
         self.on_stop = on_stop
@@ -50,6 +51,7 @@ class ControlPanel:
         self.on_step_forward = on_step_forward
         self.on_step_backward = on_step_backward
         self.on_algorithm_changed = on_algorithm_changed
+        self.on_show_cost_changed = on_show_cost_changed
         self.widget: Container = self._build()
 
     def calculate_layout(self, available_area: pygame.Rect) -> None:
@@ -88,22 +90,22 @@ class ControlPanel:
         if self.on_algorithm_changed is not None:
             self.on_algorithm_changed(value)
 
+    def _on_show_cost_changed(self, value: bool) -> None:
+        if self.on_show_cost_changed is not None:
+            self.on_show_cost_changed(value)
+
     def _on_generate_click(self) -> None:
-        print(f"Generate clicked ({self.node_count.value} nodes, {self.edge_count.value} edges)")
         if self.on_generate is not None:
             self.on_generate(self.node_count.value, self.edge_count.value)
 
     def _on_step_duration_changed(self, value: int) -> None:
         self.step_duration.value = value
-        print(f"Step duration: {value}")
 
     def _on_node_count_changed(self, value: int) -> None:
         self.node_count.value = value
-        print(f"Node count: {value}")
 
     def _on_edge_count_changed(self, value: int) -> None:
         self.edge_count.value = value
-        print(f"Edge count: {value}")
 
     def _min_edge_count(self) -> int:
         return self.node_count.value - 1
@@ -148,7 +150,7 @@ class ControlPanel:
                                 Button(
                                     key=WidgetKey(),
                                     text="Start",
-                                    width=90,
+                                    width=110,
                                     height=BUTTON_HEIGHT,
                                     on_click=self._on_start_click,
                                 ),
@@ -156,7 +158,7 @@ class ControlPanel:
                                 Button(
                                     key=WidgetKey(),
                                     text="Stop",
-                                    width=90,
+                                    width=110,
                                     height=BUTTON_HEIGHT,
                                     on_click=self._on_stop_click,
                                 ),
@@ -164,7 +166,7 @@ class ControlPanel:
                                 Button(
                                     key=WidgetKey(),
                                     text="Restart",
-                                    width=90,
+                                    width=110,
                                     height=BUTTON_HEIGHT,
                                     on_click=self._on_restart_click,
                                 ),
@@ -250,6 +252,20 @@ class ControlPanel:
                                 DropdownItem("greedy", "Greedy A*"),
                             ],
                             on_changed=self._on_algorithm_changed,
+                        ),
+                        SizedBox(height=20, width=0),
+
+                        Row(
+                            shrink_wrap=True,
+                            cross_axis_alignment=CrossAxisAlignment.CENTER,
+                            children=[
+                                Text("Show cost to reach node", style=LABEL_STYLE),
+                                SizedBox(width=10, height=0),
+                                Switch(
+                                    key=WidgetKey(),
+                                    on_changed=self._on_show_cost_changed,
+                                ),
+                            ],
                         ),
                     ],
                 ),

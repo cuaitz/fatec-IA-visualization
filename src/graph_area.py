@@ -5,11 +5,12 @@ import heapq
 import itertools
 import math
 import random
+import time
 from dataclasses import dataclass, replace
 
 import pygame
 
-NODE_RADIUS = 12
+NODE_RADIUS = 15
 NODE_MARGIN = NODE_RADIUS + 10
 MIN_NODE_DISTANCE = NODE_RADIUS * 3
 MAX_PLACEMENT_ATTEMPTS = 500
@@ -28,6 +29,9 @@ PATH_EDGE_COLOR = "#7ed957"
 EDGE_WEIGHT_COLOR = "#cfcfcf"
 EDGE_WEIGHT_FONT_SIZE = 36
 
+COST_LABEL_COLOR = "#ffffff"
+COST_LABEL_FONT_SIZE = 16
+
 # Divides an edge's on-screen length to get its weight; tweak to taste.
 EDGE_WEIGHT_FACTOR = 40
 
@@ -44,6 +48,8 @@ class AlgorithmStep:
     visited: set[int]
     frontier: set[int]
     path: list[int]
+    previous: dict[int, int]
+    distances: dict[int, float]
 
 
 class GraphArea:
@@ -54,6 +60,7 @@ class GraphArea:
         self.nodes: list[tuple[int, int]] = []
         self.edges: list[tuple[int, int]] = []
         self.weight_font = pygame.font.SysFont(None, EDGE_WEIGHT_FONT_SIZE)
+        self.cost_font = pygame.font.SysFont(None, COST_LABEL_FONT_SIZE)
 
         self.algorithm = "dijkstra"
         self.start_node: int | None = None
@@ -61,6 +68,7 @@ class GraphArea:
         self.steps: list[AlgorithmStep] = []
         self.step_index = -1
         self.is_playing = False
+        self.show_costs = False
         self._frame_counter = 0
 
     def generate(self, node_count: int, edge_count: int) -> None:
@@ -226,6 +234,9 @@ class GraphArea:
         self.algorithm = algorithm
         self._reset_run()
 
+    def set_show_costs(self, show_costs: bool) -> None:
+        self.show_costs = show_costs
+
     def start(self) -> None:
         """Starts (or resumes) auto-playing through the current algorithm's steps."""
 
@@ -297,14 +308,37 @@ class GraphArea:
 
         adjacency = self._build_adjacency()
 
+        start_time = time.perf_counter()
+
         if self.algorithm == "a_star":
             self.steps = self._run_a_star(adjacency, self.start_node, self.end_node)
         elif self.algorithm == "greedy":
-            self.steps = self._run_a_star(adjacency, self.start_node, self.end_node, heuristic_factor=1)
+            greedy_heuristic_factor = EDGE_WEIGHT_FACTOR / 5
+            self.steps = self._run_a_star(
+                adjacency,
+                self.start_node,
+                self.end_node,
+                heuristic_factor=greedy_heuristic_factor,
+            )
         else:
             self.steps = self._run_dijkstra(adjacency, self.start_node, self.end_node)
 
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
         self.step_index = 0
+        self._report_result(elapsed_ms)
+
+    def _report_result(self, elapsed_ms: float) -> None:
+        final_step = self.steps[-1]
+
+        if not final_step.path:
+            print(f"{self.algorithm}: no path found ({elapsed_ms:.2f} ms)")
+            return
+
+        cost = final_step.distances.get(self.end_node)
+        if cost is None:
+            cost = sum(self._edge_weight(a, b) for a, b in zip(final_step.path, final_step.path[1:]))
+
+        print(f"{self.algorithm}: path found, {round(cost, 1)} units ({elapsed_ms:.2f} ms)")
 
     def _build_adjacency(self) -> dict[int, list[tuple[int, int]]]:
         adjacency: dict[int, list[tuple[int, int]]] = {index: [] for index in range(len(self.nodes))}
@@ -338,21 +372,34 @@ class GraphArea:
                 continue
             visited.add(node)
 
+            reached_end = node == end
+            if not reached_end:
+                for neighbor, weight in adjacency[node]:
+                    if neighbor in visited:
+                        continue
+
+                    new_distance = distance + weight
+                    if new_distance < distances[neighbor]:
+                        distances[neighbor] = new_distance
+                        previous[neighbor] = node
+                        heapq.heappush(heap, (new_distance, neighbor))
+
+            # Snapshot after expanding, so newly discovered frontier edges show up now.
             frontier = {n for _, n in heap if n not in visited}
-            steps.append(AlgorithmStep(current=node, visited=set(visited), frontier=frontier, path=[]))
+            reached = {n: d for n, d in distances.items() if d < math.inf}
+            steps.append(
+                AlgorithmStep(
+                    current=node,
+                    visited=set(visited),
+                    frontier=frontier,
+                    path=[],
+                    previous=dict(previous),
+                    distances=reached,
+                )
+            )
 
-            if node == end:
+            if reached_end:
                 break
-
-            for neighbor, weight in adjacency[node]:
-                if neighbor in visited:
-                    continue
-
-                new_distance = distance + weight
-                if new_distance < distances[neighbor]:
-                    distances[neighbor] = new_distance
-                    previous[neighbor] = node
-                    heapq.heappush(heap, (new_distance, neighbor))
 
         return self._finalize_steps(steps, previous, start, end)
 
@@ -376,22 +423,35 @@ class GraphArea:
                 continue
             visited.add(node)
 
+            reached_end = node == end
+            if not reached_end:
+                for neighbor, weight in adjacency[node]:
+                    if neighbor in visited:
+                        continue
+
+                    new_distance = distance + weight
+                    if new_distance < distances[neighbor]:
+                        distances[neighbor] = new_distance
+                        previous[neighbor] = node
+                        priority = new_distance + self._heuristic(neighbor, end, heuristic_factor)
+                        heapq.heappush(heap, (priority, new_distance, neighbor))
+
+            # Snapshot after expanding, so newly discovered frontier edges show up now.
             frontier = {n for _, _, n in heap if n not in visited}
-            steps.append(AlgorithmStep(current=node, visited=set(visited), frontier=frontier, path=[]))
+            reached = {n: d for n, d in distances.items() if d < math.inf}
+            steps.append(
+                AlgorithmStep(
+                    current=node,
+                    visited=set(visited),
+                    frontier=frontier,
+                    path=[],
+                    previous=dict(previous),
+                    distances=reached,
+                )
+            )
 
-            if node == end:
+            if reached_end:
                 break
-
-            for neighbor, weight in adjacency[node]:
-                if neighbor in visited:
-                    continue
-
-                new_distance = distance + weight
-                if new_distance < distances[neighbor]:
-                    distances[neighbor] = new_distance
-                    previous[neighbor] = node
-                    priority = new_distance + self._heuristic(neighbor, end, heuristic_factor)
-                    heapq.heappush(heap, (priority, new_distance, neighbor))
 
         return self._finalize_steps(steps, previous, start, end)
 
@@ -408,7 +468,7 @@ class GraphArea:
         path = self._reconstruct_path(previous, start, end)
 
         if not steps:
-            return [AlgorithmStep(current=None, visited=set(), frontier=set(), path=path)]
+            return [AlgorithmStep(current=None, visited=set(), frontier=set(), path=path, previous={}, distances={})]
 
         steps[-1] = replace(steps[-1], path=path)
         return steps
@@ -431,12 +491,30 @@ class GraphArea:
             for a, b in zip(current_step.path, current_step.path[1:])
         } if current_step is not None else set()
 
+        # Edges the search tree has actually traveled along, colored to match the node
+        # they led to, so it's easy to see what's been explored/is frontier, not just the path.
+        search_edges: dict[tuple[int, int], str] = {}
+        if current_step is not None:
+            for node, parent in current_step.previous.items():
+                edge_key = (node, parent) if node < parent else (parent, node)
+                if node in current_step.visited:
+                    search_edges[edge_key] = NODE_VISITED_COLOR
+                elif node in current_step.frontier:
+                    search_edges[edge_key] = NODE_FRONTIER_COLOR
+
         for start_index, end_index in self.edges:
             start = self.nodes[start_index]
             end = self.nodes[end_index]
-            is_path_edge = (start_index, end_index) in path_edges
-            color = PATH_EDGE_COLOR if is_path_edge else EDGE_COLOR
-            pygame.draw.line(screen, color, start, end, 4 if is_path_edge else 2)
+            edge_key = (start_index, end_index) if start_index < end_index else (end_index, start_index)
+
+            if edge_key in path_edges:
+                color, thickness = PATH_EDGE_COLOR, 4
+            elif edge_key in search_edges:
+                color, thickness = search_edges[edge_key], 3
+            else:
+                color, thickness = EDGE_COLOR, 2
+
+            pygame.draw.line(screen, color, start, end, thickness)
 
             weight = math.ceil(math.dist(start, end) / EDGE_WEIGHT_FACTOR)
             label = self.weight_font.render(str(weight), True, EDGE_WEIGHT_COLOR)
@@ -446,6 +524,20 @@ class GraphArea:
         for index, position in enumerate(self.nodes):
             pygame.draw.circle(screen, self._node_color(index, current_step), position, NODE_RADIUS)
             pygame.draw.circle(screen, NODE_BORDER_COLOR, position, NODE_RADIUS, 1)
+
+            if self.show_costs and current_step is not None and index in current_step.distances:
+                cost = self._display_cost(index, current_step.distances[index])
+                label = self.cost_font.render(str(round(cost, 1)), True, COST_LABEL_COLOR)
+                screen.blit(label, label.get_rect(center=position))
+
+    def _display_cost(self, index: int, cost: float) -> float:
+        """A*/greedy order exploration by g + h, so their labels should reflect that, not just g."""
+
+        if self.algorithm == "a_star":
+            return cost + self._heuristic(index, self.end_node, EDGE_WEIGHT_FACTOR)
+        if self.algorithm == "greedy":
+            return cost + self._heuristic(index, self.end_node, EDGE_WEIGHT_FACTOR / 5)
+        return cost
 
     def _node_color(self, index: int, current_step: AlgorithmStep | None) -> str:
         if current_step is not None and index in current_step.path:
