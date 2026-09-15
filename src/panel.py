@@ -1,5 +1,7 @@
 """Builds the tessella widget tree used for the right-hand control panel."""
 
+from typing import Callable
+
 import pygame
 from tessella import *
 
@@ -10,9 +12,11 @@ LABEL_STYLE = TextStyle(font_size=14, font_color=Palette.TEXT_SECONDARY)
 class ControlPanel:
     """Owns the control panel's widget tree and the state it reacts to."""
 
-    def __init__(self) -> None:
+    def __init__(self, on_generate: Callable[[int, int], None] | None = None) -> None:
         self.step_duration: ValueNotifier[int] = ValueNotifier(10)
         self.node_count: ValueNotifier[int] = ValueNotifier(20)
+        self.edge_count: ValueNotifier[int] = ValueNotifier(20)
+        self.on_generate = on_generate
         self.widget: Container = self._build()
 
     def calculate_layout(self, available_area: pygame.Rect) -> None:
@@ -40,7 +44,9 @@ class ControlPanel:
         print("-Step clicked")
 
     def _on_generate_click(self) -> None:
-        print("Generate clicked")
+        print(f"Generate clicked ({self.node_count.value} nodes, {self.edge_count.value} edges)")
+        if self.on_generate is not None:
+            self.on_generate(self.node_count.value, self.edge_count.value)
 
     def _on_step_duration_changed(self, value: int) -> None:
         self.step_duration.value = value
@@ -49,6 +55,33 @@ class ControlPanel:
     def _on_node_count_changed(self, value: int) -> None:
         self.node_count.value = value
         print(f"Node count: {value}")
+
+    def _on_edge_count_changed(self, value: int) -> None:
+        self.edge_count.value = value
+        print(f"Edge count: {value}")
+
+    def _min_edge_count(self) -> int:
+        return self.node_count.value - 1
+
+    def _max_edge_count(self) -> int:
+        # A complete graph: every node connected to every other, each edge counted once
+        node_count = self.node_count.value
+        return node_count * (node_count - 1) // 2
+
+    def _build_edge_count_slider(self, _node_count: Observable) -> Widget:
+        min_edges = self._min_edge_count()
+        max_edges = self._max_edge_count()
+
+        # Keeps the current edge count valid whenever node count changes the allowed range
+        self.edge_count.value = max(min_edges, min(self.edge_count.value, max_edges))
+
+        return Slider(
+            key=WidgetKey(),
+            min_value=min_edges,
+            max_value=max_edges,
+            initial_value=self.edge_count.value,
+            on_changed=self._on_edge_count_changed,
+        )
 
     def _build(self) -> Container:
         """Builds the widget tree for the right-hand control panel."""
@@ -131,6 +164,17 @@ class ControlPanel:
                             max_value=64,
                             initial_value=self.node_count.value,
                             on_changed=self._on_node_count_changed,
+                        ),
+                        SizedBox(height=20, width=0),
+
+                        Listener(
+                            observable=self.edge_count,
+                            builder=lambda count: Text(f"Edge count: {count.value}", style=LABEL_STYLE),
+                        ),
+                        SizedBox(height=6, width=0),
+                        Listener(
+                            observable=self.node_count,
+                            builder=self._build_edge_count_slider,
                         ),
                         SizedBox(height=20, width=0),
 

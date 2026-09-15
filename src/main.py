@@ -5,6 +5,7 @@ import sys
 
 import pygame
 
+from graph_area import GraphArea
 from panel import ControlPanel
 
 WINDOW_WIDTH = 1000
@@ -20,11 +21,12 @@ GRAPH_AREA_COLOR = "#252526"
 GRAPH_AREA_BORDER_COLOR = "#3c3c3c"
 
 
-def draw_graph_area(screen: pygame.Surface) -> None:
-    """Draws the placeholder graph area, to be replaced by actual graph rendering."""
+def draw_graph_area(screen: pygame.Surface, graph_area: GraphArea) -> None:
+    """Draws the graph area's background, border and current nodes."""
 
     pygame.draw.rect(screen, GRAPH_AREA_COLOR, GRAPH_AREA_RECT)
     pygame.draw.rect(screen, GRAPH_AREA_BORDER_COLOR, GRAPH_AREA_RECT, 2)
+    graph_area.render(screen)
 
 
 def main() -> None:
@@ -33,7 +35,8 @@ def main() -> None:
     pygame.display.set_caption("Graph Algorithm Visualizer")
     clock = pygame.time.Clock()
 
-    control_panel = ControlPanel()
+    graph_area = GraphArea(GRAPH_AREA_RECT)
+    control_panel = ControlPanel(on_generate=graph_area.generate)
     control_panel.calculate_layout(PANEL_RECT)
 
     running = True
@@ -48,7 +51,7 @@ def main() -> None:
         control_panel.update(delta_time)
 
         screen.fill(BACKGROUND_COLOR)
-        draw_graph_area(screen)
+        draw_graph_area(screen, graph_area)
         control_panel.render(screen)
 
         pygame.display.flip()
