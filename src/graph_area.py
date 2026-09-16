@@ -33,7 +33,7 @@ COST_LABEL_COLOR = "#ffffff"
 COST_LABEL_FONT_SIZE = 16
 
 # Divides an edge's on-screen length to get its weight; tweak to taste.
-EDGE_WEIGHT_FACTOR = 40
+EDGE_WEIGHT_FACTOR = 100
 
 # How much larger the pool of nearby candidate edges is than what's actually
 # needed, before randomly sampling from it. Higher values favor locality less.
